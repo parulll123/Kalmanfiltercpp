@@ -11,9 +11,9 @@ PubSubClient mqttClient(espClient);
 
 unsigned long interval = 500;
 
-const char *ssid = "kamiko02";
-const char *password = "jpagrootech1";
-const char *mqtt_server = "public.grootech.id";
+const char *ssid = "";
+const char *password = "";
+const char *mqtt_server = "";
 const int mqtt_port = 1883;
 const char *mqtt_topic = "ESP32/data"; // Fixed empty topic
 
