@@ -1,0 +1,84 @@
+#include "set_pcf.h"
+#include "set_modbus.h"
+
+#if CONFIG_FREERTOS_UNICORE
+#define ARDUINO_RUNNING_CORE 0
+#else
+#define ARDUINO_RUNNING_CORE 1
+#endif
+
+#define ANALOG_INPUT_PIN A0
+
+#ifndef LED_BUILTIN
+#define LED_BUILTIN 13 // Specify the on which is your LED
+#endif
+
+// Define two tasks for Blink & AnalogRead.
+void TaskPCF( void *pvParameters );
+void TaskMODBUS( void *pvParameters );
+TaskHandle_t analog_read_task_handle; // You can (don't have to) use this to be able to manipulate a task from somewhere else.
+
+// The setup function runs once when you press reset or power on the board.
+void setup() {
+  // Initialize serial communication at 115200 bits per second:
+
+  // Set up two tasks to run independently.
+  uint32_t blink_delay = 1000; // Delay between changing state on LED pin
+  xTaskCreate(
+    TaskPCF
+    ,  "Task Blink" // A name just for humans
+    ,  10000        // The stack size can be checked by calling `uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);`
+    ,  (void*) &blink_delay // Task parameter which can modify the task behavior. This must be passed as pointer to void.
+    ,  2  // Priority
+    ,  NULL // Task handle is not used here - simply pass NULL
+  );
+
+  // This variant of task creation can also specify on which core it will be run (only relevant for multi-core ESPs)
+  xTaskCreatePinnedToCore(
+    TaskMODBUS
+    ,  "Modbus"
+    ,  10000  // Stack size
+    ,  NULL  // When no parameter is used, simply pass NULL
+    ,  1  // Priority
+    ,  &analog_read_task_handle // With task handle we will be able to manipulate with this task.
+    ,  ARDUINO_RUNNING_CORE // Core on which the task will run
+  );
+
+
+}
+
+void loop() {
+
+}
+
+void TaskPCF(void *pvParameters) { // This is a task.
+  Serial.begin(115200);
+
+  // initialize digital LED_BUILTIN on pin 13 as an output.
+  pinMode(pin_led, OUTPUT);
+  pinMode(pin_wdt, OUTPUT);
+
+  delay(1000);
+  Serial.println("task pcf start");
+  init_pcf();
+  delay(1000);
+
+  for (;;) { // A Task shall never return or exit.
+    baca_pcf();
+    vTaskDelay(50);
+  }
+}
+
+void TaskMODBUS(void *pvParameters) { // This is a task.
+  (void) pvParameters;
+  // Check if the given analog pin is usable - if not - delete this tas
+  init_modbus();
+  for (;;) {
+    // read the input on analog pin:
+    holdingRegs[TOTAL_ERRORS] = modbus_update(holdingRegs);
+    for (int i = 0; i < jml_dt; i++) {
+      holdingRegs[i] = dt_pln[i];
+    }
+    vTaskDelay(50);
+  }
+}
