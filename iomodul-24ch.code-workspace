@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "../../../../../Documents/MAGANG PT NICE/iomodul-24ch/iomodul-24ch"
+		},
+		{
+			"name": "kalmanfilter",
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"istream": "cpp",
+			"ostream": "cpp"
+		}
+	}
+}

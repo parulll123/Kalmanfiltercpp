@@ -1,0 +1,369 @@
+#include <Arduino.h>
+#include <SimpleKalmanFilter.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "PCF8574.h"
+#include <Preferences.h>
+SimpleKalmanFilter simpleKalmanFilter(2, 2, 0.01);
+Preferences preferences;
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
+unsigned long interval = 500;
+
+const char *ssid = "kamiko02";
+const char *password = "jpagrootech1";
+const char *mqtt_server = "public.grootech.id";
+const int mqtt_port = 1883;
+const char *mqtt_topic = "ESP32/data"; // Fixed empty topic
+
+unsigned long lastPublishTime = 0;
+unsigned long currenttimePublish;
+
+PCF8574 pcf1(0x20);
+PCF8574 pcf2(0x21);
+PCF8574 pcf3(0x22);
+
+byte pin_led = 13;
+byte pin_wdt = 14;
+bool stateLed = 0;
+byte in[] = {0, 1, 2, 3, 4, 5, 6, 7};
+
+unsigned long cur_time_wdt, old_time_wdt;
+unsigned long cur_time_pcf, old_time_pcf;
+unsigned long cur_time_get, old_time_get;
+
+int dt_in1[15];
+int dt_in2[15];
+int dt_in3[15];
+
+int c_dt1[15];
+int c_dt2[15];
+int c_dt3[15];
+
+int buf_dt1[15];
+int buf_dt2[15];
+int buf_dt3[15];
+
+int f_dt1[8];
+int f_dt2[8];
+int f_dt3[8];
+const int jml_dt = 24;
+int dt_pln[jml_dt];
+
+void reconnect();
+
+// Callback function declaration - must match expected signature
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message received on topic: ");
+  Serial.println(topic);
+
+  // Convert payload to string
+  String message = "";
+  for (int i = 0; i < length; i++) {
+      message += (char)payload[i];
+  }
+  Serial.print("Payload: ");
+  Serial.println(message);
+
+  // Handle interval setting topic
+  if (String(topic) == "event/interval") {
+      interval = atol(message.c_str());
+      if (interval < 100) interval = 100; // Minimum 100ms to prevent flooding
+      
+      preferences.begin("config", false);
+      preferences.putULong("interval", interval);
+      preferences.end();
+      
+      Serial.print("Publish interval set to: ");
+      Serial.println(interval);
+  }
+}
+
+void setup()
+{
+  // put your setup code here, to run once:
+  Serial.begin(9600);
+  preferences.begin("config", false);
+  // Load saved interval if exists, otherwise use default
+  interval = preferences.getULong("interval", 1000); // Default 1000ms if not set
+  preferences.end();
+  
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  int connectionAttempts = 0;
+  while (WiFi.status() != WL_CONNECTED && connectionAttempts < 20) // Added timeout
+  {
+    delay(500);
+    Serial.print(".");
+    connectionAttempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  }
+  else
+  {
+    Serial.println("");
+    Serial.println("WiFi connection failed. Will retry in task loop.");
+  }
+
+  // Set the callback first - before connecting
+  mqttClient.setCallback(callback);
+  
+  // Then set server
+  mqttClient.setServer(mqtt_server, mqtt_port);
+  Serial.print("MQTT server set to: ");
+  Serial.print(mqtt_server);
+  Serial.print(":");
+  Serial.println(mqtt_port);
+
+  pinMode(pin_led, OUTPUT);
+  pinMode(pin_wdt, OUTPUT);
+
+  for (int i = 0; i < sizeof(in); i++)
+  {
+    pcf1.pinMode(in[i], INPUT);
+    pcf2.pinMode(in[i], INPUT);
+    pcf3.pinMode(in[i], INPUT);
+  }
+  Serial.println("Init pcf1...");
+  if (pcf1.begin())
+  {
+    Serial.println("OK pcf1");
+  }
+  else
+  {
+    Serial.println("KO");
+  }
+
+  Serial.println("Init pcf2...");
+  if (pcf2.begin())
+  {
+    Serial.println("OK pcf2");
+  }
+  else
+  {
+    Serial.println("KO");
+  }
+
+  Serial.println("Init pcf3...");
+  if (pcf3.begin())
+  {
+    Serial.println("OK pcf3");
+  }
+  else
+  {
+    Serial.println("KO");
+  }
+  
+  // Initial connection attempt
+  if (!mqttClient.connected()) {
+    reconnect();
+  }
+}
+
+void loop()
+{
+  // put your main code here, to run repeatedly:
+
+  // Handle MQTT connection and maintain it
+  if (!mqttClient.connected())
+  {
+    reconnect();
+  }
+  mqttClient.loop(); // Essential for MQTT maintenance
+
+  cur_time_wdt = millis();
+  if (cur_time_wdt - old_time_wdt >= 500)
+  {
+    stateLed = !stateLed;
+    digitalWrite(pin_led, stateLed);
+    digitalWrite(pin_wdt, stateLed);
+    old_time_wdt = millis();
+  }
+
+  cur_time_pcf = millis();
+  if (cur_time_pcf - old_time_pcf >= 50)
+  {
+    /*Serial.print("PCF1:");
+    for (int i = 0; i < sizeof(in); i++) {
+      dt_in1[i] = !pcf1.digitalRead(in[i]);
+      Serial.print(dt_in1[i]);
+      Serial.print(",");
+      if (dt_in1[i] == 1)c_dt1[i]++;
+    }
+    */
+    // Serial.println();
+    // Serial.print("PCF2:");
+    for (int i = 0; i < sizeof(in); i++)
+    {
+      dt_in2[i] = !pcf2.digitalRead(in[i]);
+      if (dt_in2[i] == 1)
+        c_dt2[i]++;
+      // Serial.print(c_dt2[i]);
+      // Serial.print(",");
+    }
+    // Serial.println();
+    // Serial.print("PCF3:");
+    for (int i = 0; i < sizeof(in); i++)
+    {
+      dt_in3[i] = !pcf3.digitalRead(in[i]);
+      if (dt_in3[i] == 1)
+        c_dt3[i]++;
+      // Serial.print(c_dt3[i]);
+      // Serial.print(",");
+    }
+    // Serial.println();
+    old_time_pcf = millis();
+  }
+
+  cur_time_get = millis();
+  if (cur_time_get - old_time_get >= 3000)
+  {
+    Serial.print("pcf2:");
+    for (int i = 0; i < sizeof(in); i++)
+    {
+      Serial.print(c_dt2[i]);
+      Serial.print(",");
+    }
+    Serial.println();
+    Serial.print("pcf3:");
+    for (int i = 0; i < sizeof(in); i++)
+    {
+      Serial.print(c_dt3[i]);
+      Serial.print(",");
+    }
+    Serial.println();
+
+    for (int i = 0; i < sizeof(in); i++)
+    {
+      buf_dt2[i] = (c_dt2[i] > 0) ? 1 : 0;
+    }
+
+    for (int i = 0; i < sizeof(in); i++)
+    {
+      buf_dt3[i] = (c_dt3[i] > 0) ? 1 : 0;
+    }
+    Serial.print("urt:");
+    dt_pln[0] = buf_dt1[0];
+    dt_pln[1] = buf_dt1[1];
+    dt_pln[2] = buf_dt1[2];
+    dt_pln[3] = buf_dt1[3];
+
+    dt_pln[4] = buf_dt1[7];
+    dt_pln[5] = buf_dt1[6];
+    dt_pln[6] = buf_dt1[5];
+    dt_pln[7] = buf_dt1[4];
+
+    dt_pln[8] = buf_dt2[0];
+    dt_pln[9] = buf_dt2[1];
+    dt_pln[10] = buf_dt2[2];
+    dt_pln[11] = buf_dt2[3];
+
+    dt_pln[12] = buf_dt2[7]; // R1
+    dt_pln[13] = buf_dt2[6]; // T1
+    dt_pln[14] = buf_dt2[5]; // S1
+    dt_pln[15] = buf_dt2[4]; // R2
+
+    dt_pln[16] = buf_dt3[7]; // T2
+    dt_pln[17] = buf_dt3[6]; // S2
+    dt_pln[18] = buf_dt3[5]; // R3
+    dt_pln[19] = buf_dt3[4]; // S3
+
+    dt_pln[20] = buf_dt3[0]; // T3
+    dt_pln[21] = buf_dt3[1];
+    dt_pln[22] = buf_dt3[2];
+    dt_pln[23] = buf_dt3[3];
+
+    for (int i = 0; i < jml_dt; i++)
+    {
+      Serial.print(dt_pln[i]);
+      Serial.print(",");
+    }
+    Serial.println();
+
+    for (int i = 0; i < sizeof(in); i++)
+    {
+      c_dt2[i] = 0;
+      c_dt3[i] = 0;
+    }
+
+    // Update currenttimePublish variable
+    currenttimePublish = millis();
+
+    if (currenttimePublish - lastPublishTime >= interval) // Use variable interval
+    {
+      // Create JSON string with all data points
+      String payload = "{\"R1\":\"" + String(dt_pln[12]) + "\",\"S1\":\"" + String(dt_pln[13]) + "\",\"T1\":\"" + String(dt_pln[14]) +
+      "\",\"R2\":\"" + String(dt_pln[15]) + "\",\"S2\":\"" + String(dt_pln[17]) + "\",\"T2\":\"" + String(dt_pln[16]) + 
+      "\",\"R3\":\"" + String(dt_pln[18]) + "\",\"S3\":\"" + String(dt_pln[19]) + "\",\"T3\":\"" + String(dt_pln[20]) +  
+      "\"}";
+
+      Serial.println("Publishing data to MQTT...");
+      Serial.println(payload);
+      
+      if (mqttClient.connected())
+      {
+        if (mqttClient.publish(mqtt_topic, payload.c_str()))
+        {
+          Serial.println("MQTT data published successfully");
+        }
+        else
+        {
+          Serial.println("Failed to publish MQTT data");
+        }
+      }
+      else
+      {
+        Serial.println("MQTT not connected, attempting reconnection");
+        reconnect();
+      }
+
+      lastPublishTime = currenttimePublish;
+    }
+
+    old_time_get = millis();
+  }
+}
+
+void reconnect()
+{
+  // Loop until we're reconnected
+  int attempts = 0;
+  while (!mqttClient.connected() && attempts < 3)
+  { // Limit connection attempts to prevent blocking
+    attempts++;
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect with a client ID
+    String clientId = "ESP32Client-";
+    clientId += String(random(0xffff), HEX); // Random client ID to avoid conflicts
+
+    if (mqttClient.connect(clientId.c_str()))
+    {
+      Serial.println("connected");
+      // Subscribe to topics here after successful connection
+      mqttClient.subscribe("event/interval");
+      Serial.println("Subscribed to event/interval topic");
+      
+      // You can add additional topics here
+      mqttClient.subscribe("esp32/output");
+    }
+    else
+    {
+      Serial.print("failed, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
