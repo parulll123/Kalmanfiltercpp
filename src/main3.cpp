@@ -11,11 +11,11 @@ PubSubClient mqttClient(espClient);
 
 unsigned long interval = 500;
 
-const char *ssid = "RUT200_51D1";
-const char *password = "P@ssw0rd1";
-const char *mqtt_server = "public.grootech.id";
+const char *ssid = "";
+const char *password = "";
+const char *mqtt_server = "";
 const int mqtt_port = 1883;
-const char *mqtt_topic = "PLN/bekasi/bekasi-barat/2b860658-6aaa-46bf-9e81-e28bf78b04ac/periodic"; // Fixed empty topic
+const char *mqtt_topic = ""; // Fixed empty topic
 
 unsigned long lastPublishTime = 0;
 unsigned long currenttimePublish;
